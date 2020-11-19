@@ -13,6 +13,13 @@
 #define ENABLE 1
 #define DISABLE 0
 
+/*
+ * enable/disable process responce to the SIGINT (CTRL-C) signal
+ * status gets values:
+ * - ENABLE: set SIGINT default behavior
+ * - DISABLE: ignore SIGINT
+ *
+ * */
 int toggle_sigint(int status) {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -28,19 +35,28 @@ int toggle_sigint(int status) {
     return sigaction(SIGINT, &sa, NULL);
 }
 
-
+// shell initialization
 int prepare(void) {
     toggle_sigint(DISABLE);
     return 0;
 }
 
+// shell cleanup
 int finalize(void) {
     return 0;
 }
 
 
 
-
+/*
+ * Execute a command from shell prompt.
+ * arglist - parsed command into array of strings.
+ *           Last element should always be NULL
+ * mode - execution mode:
+ *        STD - foreground command
+ *        BG  - background command
+ *
+ * */
 int exec_cmd(char** arglist, int mode) {
     int pid = fork();
 
@@ -50,8 +66,11 @@ int exec_cmd(char** arglist, int mode) {
     }
 
     if (pid > 0) { //parent
-        if (mode == 0) {
+        if (mode == STD) {
             wait(NULL);
+        }
+        else {
+            waitpid(pid, NULL, WNOHANG);
         }
     }
     else { // child
@@ -62,58 +81,28 @@ int exec_cmd(char** arglist, int mode) {
     return 0;
 }
 
-
-int exec_pipe_2(int count, char** arglist, int i) {
-    int fd[2];
-    pipe(fd);
-
-    int pid1 = fork();
-
-    if (pid1 == 0) {
-        //child
-        dup2(fd[1], STDOUT_FILENO); // replace stdout with output side of pipeline
-        close(fd[0]);
-        close(fd[1]);
-        execvp(arglist[0], arglist);
-        printf("ERROR\n");
-    }
-    else {
-        //parent
-        close(fd[1]);
-
-        int pid2 = fork();
-
-        if (pid2 == 0) {
-            // 2nd child
-            dup2(fd[0], STDIN_FILENO);
-            close(fd[0]);
-            execvp(arglist[i+1], arglist+i+1);
-            printf("ERROR\n");
-        }
-        else {
-            close(fd[0]);
-            waitpid(pid1, NULL, 0);
-            waitpid(pid2, NULL, 0);
-        }
-
-    }
-    return 0;
-}
-
-
-int exec_pipe(int count, char** arglist, int i) {
+/*
+ * Execute a command that contains a pipeline (PIPE cmd type)
+ * arglist - parsed command into array of strings.
+ *           Last element should always be NULL
+ *           Pipeline index is also NULL
+ * pipe_index - index of pipeline in arglist (which is now NULL)
+ *
+ * */
+int exec_pipe(char** arglist, int pipe_index) {
     int fd[2]; // fd[0] - read ; fd[1] - write
     pipe(fd);
 
     int id1 = fork();
 
-    if (id1 == 0) { // child (ls -l)
+    if (id1 == 0) { // child
         toggle_sigint(ENABLE);
         dup2(fd[1], STDOUT_FILENO); // redirect stdout to pipe
         close(fd[0]);
         close(fd[1]);
         execvp(arglist[0], arglist); // arglist until first NULL encountered
     }
+
     // only parent executes code from here on
     close(fd[1]);
 
@@ -124,36 +113,16 @@ int exec_pipe(int count, char** arglist, int i) {
         dup2(fd[0], STDIN_FILENO); // redirect stdin to pipe
         close(fd[0]);
         close(fd[1]);
-        execvp(arglist[i+1], arglist+i+1);
+        execvp(arglist[pipe_index + 1], arglist + pipe_index + 1);
     }
 
     close(fd[0]);
 
-
-    waitpid(id1, NULL, 0);
-    waitpid(id2, NULL, 0);
+    waitpid(id1, NULL, WNOHANG);
+    waitpid(id2, NULL, WNOHANG);
 
     return 0;
 
-}
-
-
-/*
- * search for pipeline in command.
- * if found - return pipeline's index in arglist
- * if not found - return -1
- *
- * */
-int is_piped(int count, char** arglist) {
-    int i;
-
-    for (i=0; i<count; i++) {
-        if (*arglist[i] == '|') {
-            return i;
-        }
-    }
-
-    return -1;
 }
 
 
@@ -177,7 +146,7 @@ int process_arglist(int count, char** arglist) {
     switch (exec_mode) {
         case PIPE:
             arglist[pipeline] = NULL;
-            exec_pipe(count, arglist, pipeline);
+            exec_pipe(arglist, pipeline);
             break;
         case BG:
             arglist[count-1] = NULL;
@@ -186,15 +155,5 @@ int process_arglist(int count, char** arglist) {
             break;
     }
 
-/*
-    if (*arglist[count-1] == '&') { // bg command
-        arglist[count-1] = NULL;
-        mode = BG;
-    }
-    else if (is_piped(count, arglist) != -1) { // command contains pipeline
-        mode = PIPE;
-    }
-*/
-    //
     return 1;
 }
