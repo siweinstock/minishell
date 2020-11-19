@@ -4,12 +4,33 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <string.h>
 
 #define STD 0       // default command (no pipeline or ampersand)
 #define BG 1        // background command (ampersand)
 #define PIPE 2      // piped command (pipeline)
 
+#define ENABLE 1
+#define DISABLE 0
+
+int toggle_sigint(int status) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+
+    if (status == ENABLE) {
+        sa.sa_handler = SIG_DFL;
+    }
+    else if (status == DISABLE) {
+        sa.sa_handler = SIG_IGN;
+    }
+    sa.sa_flags = SA_RESTART;
+
+    return sigaction(SIGINT, &sa, NULL);
+}
+
+
 int prepare(void) {
+    toggle_sigint(DISABLE);
     return 0;
 }
 
@@ -18,12 +39,6 @@ int finalize(void) {
 }
 
 
-void handler() {
-
-}
-
-void disable_sigint() {
-}
 
 
 int exec_cmd(char** arglist, int mode) {
@@ -40,6 +55,7 @@ int exec_cmd(char** arglist, int mode) {
         }
     }
     else { // child
+        toggle_sigint(ENABLE);
         execvp(arglist[0], arglist);
     }
 
@@ -92,6 +108,7 @@ int exec_pipe(int count, char** arglist, int i) {
     int id1 = fork();
 
     if (id1 == 0) { // child (ls -l)
+        toggle_sigint(ENABLE);
         dup2(fd[1], STDOUT_FILENO); // redirect stdout to pipe
         close(fd[0]);
         close(fd[1]);
@@ -103,6 +120,7 @@ int exec_pipe(int count, char** arglist, int i) {
     int id2 = fork();
 
     if (id2 == 0) { // child
+        toggle_sigint(ENABLE);
         dup2(fd[0], STDIN_FILENO); // redirect stdin to pipe
         close(fd[0]);
         close(fd[1]);
@@ -137,6 +155,7 @@ int is_piped(int count, char** arglist) {
 
     return -1;
 }
+
 
 int process_arglist(int count, char** arglist) {
     int exec_mode = STD;
