@@ -67,9 +67,10 @@ int exec_cmd(char** arglist, int mode) {
 
     if (pid > 0) { //parent
         if (mode == STD) {
-            wait(NULL);
+            //wait(NULL);
+            waitpid(pid, NULL, 0);
         }
-        else {
+        else {  // background command
             waitpid(pid, NULL, WNOHANG);
         }
     }
